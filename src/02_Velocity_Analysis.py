@@ -56,13 +56,13 @@ Versão: 1.0
 """
 
 # ================= CONFIGURAÇÃO =================
-BASE_DIR = r'C:/Users/Anacarvs/Desktop/SeismicModeling2D-master/SeismicModeling2D-master'
+BASE_DIR = r'C:/Users/Anacarvs/Desktop/Anisotropy_Analysis/'
 
-F_BIN_IN = f'{BASE_DIR}/outputs/Line_CMP_Sorted.bin'
-F_HEAD   = f'{BASE_DIR}/outputs/Trace_Headers.csv'
-F_OUT_PICKS = f'{BASE_DIR}/outputs/Velocity_Picks.csv'
-F_OUT_VEL   = f'{BASE_DIR}/outputs/Velocity_Model_2D.bin'
-F_OUT_NMO   = f'{BASE_DIR}/outputs/Line_NMO_Corrected.bin'
+F_BIN_IN = f'{BASE_DIR}/Outputs/Line_CMP_Sorted_T2_8km.bin'
+F_HEAD   = f'{BASE_DIR}/outputs/Trace_Headers_T2_8km.csv'
+F_OUT_PICKS = f'{BASE_DIR}/Outputs/Velocity_Picks.csv'
+F_OUT_VEL   = f'{BASE_DIR}/Outputs/Velocity_Model_2D.bin'
+F_OUT_NMO   = f'{BASE_DIR}/Outputs/Line_NMO_Corrected.bin'
 
 Nt = 12001           
 dt = 0.0005          

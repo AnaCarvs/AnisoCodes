@@ -58,7 +58,7 @@ Nt = 12001          # Número de amostras (Ex: 12001 para T=6s)
 dt = 0.0005         # Taxa de amostragem (Ex: 0.5ms)
 
 # --- GEOMETRIA ---
-CMP_BIN_GRID = 10.125  # Tamanho do Bin CMP
+CMP_BIN_GRID = 10.0 # Tamanho do Bin CMP
 
 # --- CONTROLE DE NOMES (SUFIXO) ---
 # Adicione aqui o identificador do teste. Ex: "_T1_8km"
