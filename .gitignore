@@ -1,0 +1,12 @@
+# --- Python (Arquivos temporários que não servem pra nada) ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# --- Configurações do editor (VS Code, Pycharm) ---
+.vscode/
+.idea/
+
+# Se tiver pastas específicas de dados, coloque o nome da pasta com barra:
+Outputs/
