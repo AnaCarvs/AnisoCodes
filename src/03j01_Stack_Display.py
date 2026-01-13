@@ -2,152 +2,118 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import os
-
-"""
-SCRIPT 04: CMP STACKING (UNIVERSAL)
-=====================================================
-Instruções de Uso:
-1. Altere APENAS a seção 'CONFIGURAÇÃO DO USUÁRIO'.
-2. O script detecta automaticamente o número de traços e CMPs.
-3. O 'Smart Stack' lida com mutes e geometrias irregulares.
-=====================================================
-"""
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # ==============================================================================
-# 1. CONFIGURAÇÃO DO USUÁRIO (EDITE AQUI)
+# 1. CONFIGURAÇÃO
 # ==============================================================================
+BASE_DIR = r'C:/Users/AnaCarvs.GISIS/Desktop/Dataset'
 
-# Caminhos (Use barras normais '/' ou r'C:\...')
-BASE_DIR = r'C:\Users\anapa\OneDrive\Área de Trabalho\SeismicModeling2D-master\SeismicModeling2D-master'
+# Entrada (Saída do passo anterior)
+FILE_NMO  = f'{BASE_DIR}/Linha/Line_NMO_Corrected_AP2.bin'
+FILE_HEAD = f'{BASE_DIR}/Linha/Trace_Headers_AP2.csv'
 
-# Arquivos de Entrada (Devem existir)
-FILE_NMO_INPUT  = f'{BASE_DIR}/outputs/Line_NMO_Corrected_AP2.bin' # Dado NMO corrigido
-FILE_HEADERS    = f'{BASE_DIR}/outputs/Trace_Headers_AP2.csv'      # Headers correspondentes
+# Saída
+FILE_STACK = f'{BASE_DIR}/Linha/Line_Stack_Final_AP2.bin'
 
-# Arquivo de Saída (Será criado)
-FILE_STACK_OUT  = f'{BASE_DIR}/outputs/Seismic_Section_Stacked_AP2.bin'
+# Geometria
+Nt = 1501
+dt = 0.001
 
-# Parâmetros do Seu Dado (Verifique no header ou EBCDIC)
-Nt = 1501             # Número de amostras por traço
-dt = 0.001            # Taxa de amostragem (segundos)
-CMP_BIN_SIZE = 10.0   # Tamanho do bin (apenas p/ info, não afeta o cálculo direto)
+# Visualização
+PCLIP = 99.0 # Percentil para corte de amplitude no plot (melhor contraste)
 
 # ==============================================================================
-# 2. LÓGICA DE PROCESSAMENTO (NÃO PRECISA EDITAR)
+# 2. ROTINA DE EMPILHAMENTO (STACK)
 # ==============================================================================
-
-def load_headers_safe(path):
-    print(f"Lendo headers: {os.path.basename(path)}")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Arquivo de headers não encontrado: {path}")
-    
-    df = pd.read_csv(path)
-    # Padroniza nomes de colunas (remove espaços e minúsculas)
-    df.columns = df.columns.str.strip().str.lower()
-    
-    # Cria índice global se não existir (essencial para mapear o binário)
-    if 'global_trace_index' not in df.columns:
-        print("-> Criando índice de traços sequencial...")
-        df['global_trace_index'] = np.arange(len(df))
-        
-    return df
-
 def run_stacking():
-    # 1. Verificações
-    if not os.path.exists(FILE_NMO_INPUT):
-        print(f"ERRO CRÍTICO: Binário de entrada não existe: {FILE_NMO_INPUT}")
-        return None, None
+    print(">>> Lendo cabeçalhos...")
+    try:
+        h = pd.read_csv(FILE_HEAD)
+        h.columns = h.columns.str.strip().str.lower()
+        if 'cmp_x' in h.columns: h.rename(columns={'cmp_x':'cmp'}, inplace=True)
+        if 'global_trace_index' not in h.columns: h['global_trace_index'] = h.index
+    except Exception as e:
+        print(f"ERRO CRÍTICO ao ler cabeçalhos: {e}")
+        return
 
-    # 2. Carrega Geometria
-    headers = load_headers_safe(FILE_HEADERS)
-    n_traces_total = len(headers)
-    
-    # Valida tamanho do arquivo binário para evitar erros de leitura
-    expected_bytes = n_traces_total * Nt * 4 # 4 bytes por float32
-    actual_bytes = os.path.getsize(FILE_NMO_INPUT)
-    
-    if actual_bytes != expected_bytes:
-        print(f"\n[ALERTA] Tamanho do arquivo incorreto!")
-        print(f"Esperado (Nt={Nt} * Traces={n_traces_total}): {expected_bytes} bytes")
-        print(f"Encontrado: {actual_bytes} bytes")
-        print("-> Verifique se o parâmetro 'Nt' está correto para este dado.")
-        return None, None
+    # Mapeia o arquivo NMO (Leitura rápida)
+    if not os.path.exists(FILE_NMO):
+        print(f"ERRO: Arquivo NMO não encontrado em {FILE_NMO}")
+        return
+        
+    print(f">>> Mapeando dados NMO ({Nt} x {len(h)} traces)...")
+    nmo_data = np.memmap(FILE_NMO, dtype='float32', mode='r', shape=(Nt, len(h)), order='F')
 
-    # 3. Mapeia o Dado (Memmap para não estourar a RAM)
-    print(f"Mapeando dado NMO ({n_traces_total} traços x {Nt} amostras)...")
-    data_nmo = np.memmap(FILE_NMO_INPUT, dtype='float32', mode='r', shape=(Nt, n_traces_total), order='F')
-    
-    # 4. Prepara Empilhamento
-    col_cmp = 'cmp' if 'cmp' in headers.columns else 'cmp_x'
-    unique_cmps = np.sort(headers[col_cmp].unique())
+    # Identifica CMPs únicos ordenados (Eixo X da seção)
+    unique_cmps = np.sort(h['cmp'].unique())
     n_cmps = len(unique_cmps)
     
-    print(f"Iniciando Empilhamento de {n_cmps} CMPs únicos...")
+    print(f">>> Empilhando {n_cmps} CMPs...")
     
-    # Array da Seção Final (Tempo x CMP)
-    stacked_section = np.zeros((Nt, n_cmps), dtype=np.float32)
+    # Matriz da Seção Stack (Tempo x CMP)
+    stack_section = np.zeros((Nt, n_cmps), dtype=np.float32)
     
-    # Agrupa índices para acesso rápido (muito mais rápido que filtrar df no loop)
-    grouped_indices = headers.groupby(col_cmp)['global_trace_index'].apply(list).to_dict()
+    # Agrupamento pandas (Muito mais rápido que filtrar no loop)
+    grouped = h.groupby('cmp')
     
-    # 5. Loop de Stack
+    # Loop de Empilhamento
     for i, cmp_val in enumerate(tqdm(unique_cmps, desc="Stacking")):
+        if cmp_val not in grouped.groups:
+            continue
+            
         # Pega índices dos traços que pertencem a este CMP
-        idxs = grouped_indices[cmp_val]
+        trace_indices = grouped.get_group(cmp_val).index.values
         
-        # Lê o gather (apenas os traços necessários)
-        gather = np.array(data_nmo[:, idxs])
+        # Lê os traços do disco
+        gather = np.array(nmo_data[:, trace_indices])
         
-        # --- SMART STACK ---
-        # Soma as amplitudes
-        sum_trace = np.sum(gather, axis=1)
+        # Fold (Multiplicidade real neste CMP)
+        fold = gather.shape[1]
         
-        # Conta quantos traços contribuíram (não são zero)
-        # Isso compensa o Mute: se 50% dos traços foram mutados no topo, 
-        # dividimos por 50% do fold, mantendo a amplitude correta.
-        live_fold = np.sum(gather != 0, axis=1)
-        
-        # Evita divisão por zero (onde não tem dado nenhum, fica 0)
-        live_fold[live_fold == 0] = 1.0
-        
-        # Média normalizada
-        stacked_section[:, i] = sum_trace / live_fold
-
-    # 6. Salva Resultado
-    print(f"Salvando seção empilhada em: {os.path.basename(FILE_STACK_OUT)}")
-    stacked_section.tofile(FILE_STACK_OUT)
+        if fold > 0:
+            # SOMA E NORMALIZAÇÃO (Média Aritmética - Padrão Indústria)
+            # Stack = Sum(Traces) / Fold
+            stack_trace = np.sum(gather, axis=1) / fold
+            stack_section[:, i] = stack_trace
+            
+    print(">>> Salvando Seção Stack...")
+    # Salva em binário puro (float32)
+    stack_section.tofile(FILE_STACK)
     
-    return unique_cmps, stacked_section
-
-def plot_result(cmps, section):
-    print("\n--- Visualizando Resultado ---")
-    plt.figure(figsize=(14, 8))
+    # ==============================================================================
+    # 3. QC: VISUALIZAÇÃO DA SEÇÃO FINAL
+    # ==============================================================================
+    print(">>> Gerando QC da Seção Final...")
     
-    # Aplica ganho t^2 apenas para visualização
-    t_axis = np.arange(Nt, dtype=np.float32) * dt
-    gain = t_axis ** 2.0
-    view_data = section * gain[:, None]
+    fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Define contraste robusto
-    vm = np.percentile(np.abs(view_data), 99.0)
-    if vm <= 0: vm = 1
+    # Cálculo de ganho visual (Percentil)
+    vm = np.percentile(np.abs(stack_section), PCLIP)
+    if vm == 0: vm = 1
     
-    plt.imshow(view_data, aspect='auto', cmap='gray', vmin=-vm, vmax=vm,
-               extent=[cmps[0], cmps[-1], Nt*dt, 0], interpolation='bilinear')
+    # Extent para eixos corretos [CMP_min, CMP_max, Time_max, Time_min]
+    extent = [unique_cmps[0], unique_cmps[-1], Nt*dt, 0]
     
-    plt.title(f"Seção Empilhada (Stacked)\n{len(cmps)} CMPs | Nt={Nt} | dt={dt}s")
-    plt.xlabel("CMP Number")
-    plt.ylabel("Tempo (s)")
-    plt.colorbar(label="Amplitude (Ganho t^2)")
-    plt.grid(True, alpha=0.3, linestyle='--')
+    im = ax.imshow(stack_section, aspect='auto', cmap='gray', vmin=-vm, vmax=vm, 
+                   extent=extent, origin='upper')
+    
+    ax.set_title(f"Seção Sísmica Empilhada (Stack) - {n_cmps} CMPs")
+    ax.set_xlabel("CMP Number")
+    ax.set_ylabel("Time [s]")
+    ax.grid(False)
+    
+    # Colorbar
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="2%", pad=0.1)
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label("Amplitude")
+    
     plt.tight_layout()
     plt.show()
+    
+    print(f">>> Processo concluído. Arquivo salvo em: {FILE_STACK}")
 
-# ==============================================================================
-# 3. EXECUÇÃO
-# ==============================================================================
 if __name__ == "__main__":
-    cmps, section = run_stacking()
-    if section is not None:
-        plot_result(cmps, section)
+    import os
+    run_stacking()

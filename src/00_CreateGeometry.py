@@ -21,7 +21,7 @@ Técnica:
 - Gera um grid de receptores que cobre todos os offsets possíveis.
 - Simula a aquisição tiro-a-tiro para calcular o fold (cobertura).
 - Gera gráficos de controle de qualidade (QC) e uma tabela resumo.
-
+sets
 ----------------------------------------------------------------------------
 Parâmetros Editáveis:
 - Domínio do Modelo (Lx, Zsrc, Zrec)

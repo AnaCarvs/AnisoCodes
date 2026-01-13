@@ -16,12 +16,12 @@ Melhorias:
 """
 
 # ================= CONFIGURAÇÃO (EDITÁVEL) =================
-BASE_DIR = r'C:\Users\anapa\OneDrive\Área de Trabalho\SeismicModeling2D-master\SeismicModeling2D-master'
+BASE_DIR = r'C:/Users/AnaCarvs.GISIS/Desktop/Dataset'
 
 # Entradas
-ARQUIVO_SRC = f'{BASE_DIR}/inputs/sources_AP2.csv' 
-ARQUIVO_REC = f'{BASE_DIR}/inputs/receivers_AP2.csv' 
-PASTA_SISMOGRAMAS = f'{BASE_DIR}/outputs/seismograms/AP2/' 
+ARQUIVO_SRC = f'{BASE_DIR}/Geometria/sources_AP2.csv' 
+ARQUIVO_REC = f'{BASE_DIR}/Geometria/receivers_AP2.csv' 
+PASTA_SISMOGRAMAS = f'{BASE_DIR}/Sismogramas/' 
 
 PREFIXO_ARQUIVO = "VTIseismogram_shot_" 
 
@@ -34,15 +34,15 @@ CMP_BIN_GRID = 10.0 # Tamanho do Bin CMP
 
 # --- VISUALIZAÇÃO ---
 GANHO_VISUAL = 2.5  # Ganho forte para ver reflexões
-SUFIXO = "_AP2" 
+SUFIXO = "" 
 
 # ================= CONFIGURAÇÃO DE SAÍDA =================
 NOME_ARQUIVO_BIN = f'Line_CMP_Sorted{SUFIXO}.bin'
 NOME_ARQUIVO_CSV = f'Trace_Headers{SUFIXO}.csv'
 
-OUTPUT_BIN = f'{BASE_DIR}/outputs/{NOME_ARQUIVO_BIN}'
-OUTPUT_CSV = f'{BASE_DIR}/outputs/{NOME_ARQUIVO_CSV}'
-QC_FOLDER  = f'{BASE_DIR}/outputs/QC_Geometry/'
+OUTPUT_BIN = f'{BASE_DIR}/Linha/{NOME_ARQUIVO_BIN}'
+OUTPUT_CSV = f'{BASE_DIR}/Linha/{NOME_ARQUIVO_CSV}'
+QC_FOLDER  = f'{BASE_DIR}/Linha/QC_Geometry/'
 os.makedirs(QC_FOLDER, exist_ok=True)
 
 # <--- ATIVADO O QC --->

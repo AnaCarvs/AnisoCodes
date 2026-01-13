@@ -10,14 +10,14 @@ from tqdm import tqdm
 from numba import jit, prange
 
 # ================= CONFIGURAÇÃO =================
-BASE_DIR = r'C:\Users\anapa\OneDrive\Área de Trabalho\SeismicModeling2D-master\SeismicModeling2D-master'
+BASE_DIR = r'C:/Users/AnaCarvs.GISIS/Desktop/Dataset'
 
-F_BIN_IN = f'{BASE_DIR}/outputs/Line_CMP_Muted_AP2.bin'
-F_HEAD = f'{BASE_DIR}/outputs/Trace_Headers_AP2.csv'
+F_BIN_IN = f'{BASE_DIR}/Linha/Line_CMP_Muted_AP2.bin'
+F_HEAD = f'{BASE_DIR}/Geometria/Trace_Headers_AP2.csv'
 
-F_OUT_PICKS = f'{BASE_DIR}/Outputs/Velocity_Picks.csv'
-F_OUT_VEL   = f'{BASE_DIR}/Outputs/Velocity_Model_2D.bin'
-F_OUT_NMO   = f'{BASE_DIR}/Outputs/Line_NMO_Corrected.bin'
+F_OUT_PICKS = f'{BASE_DIR}/Picks/Velocity_Picks.csv'
+F_OUT_VEL   = f'{BASE_DIR}/Propriedades/Velocity_Model_2D.bin'
+F_OUT_NMO   = f'{BASE_DIR}/Linha/Line_NMO_Corrected.bin'
 
 Nt = 1501           
 dt = 0.001        
