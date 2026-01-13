@@ -2,70 +2,25 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button, TextBox
-from scipy.ndimage import uniform_filter1d
-from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter  # Adicionado para suavização
+from scipy.interpolate import interp1d
 import os
 import gc
 from tqdm import tqdm
 from numba import jit, prange
 
-"""
-SCRIPT 02: VELOCITY ANALYSIS INTERATIVO
-===================================================
-Objetivo:
-1. Permitir picking interativo de curvas de velocidade RMS em CMPs.
-2. Gerar modelo de velocidade 2D por interpolação dos picks.
-3. Aplicar NMO com o modelo de velocidade gerado.
-Técnica:
-- Usa semblance para auxiliar no picking.
-- Usa Numba para acelerar cálculos pesados.
-- Permite navegação por CMPs e ajuste de parâmetros em tempo real.
---------------------------------------------------
-Parâmetros Editáveis:
-- BASE_DIR: Diretório base dos arquivos de entrada/saída.
-- F_BIN_IN: Arquivo binário de entrada (CMP sorted).
-- F_HEAD: Arquivo CSV de cabeçalhos de traço.
-- F_OUT_PICKS: Arquivo CSV de picks de velocidade.
-- F_OUT_VEL: Arquivo binário do modelo de velocidade 2D.
-- F_OUT_NMO: Arquivo binário da seção NMO corrigida.
-- Nt, dt: Número de amostras e intervalo de tempo.
-- CMP_BIN_SIZE, CMP_STEP: Tamanho do bin CMP e passo de navegação.
-- INIT_VMIN, INIT_VMAX, INIT_DV: Parâmetros iniciais de velocidade.
-- INIT_WIN, INIT_GAIN: Parâmetros iniciais de janela de semblance e ganho.
-- VEL_MUTE, BUF_MUTE: Parâmetros de mute baseados em velocidade.
-- STRETCH_LIM: Limite de stretch para NMO.
-- WIN_SEMBLANCE: Janela de semblance em segundos.
-------------------------------------------------
-Observações:
-- Use o botão "Salvar" para salvar os picks atuais.
-- Use o botão "EXPORTAR" para gerar o modelo de velocidade e aplicar NMO.
-- Use o botão "RESETAR" para limpar todos os picks.
-- Clique com o botão esquerdo para adicionar um pick, clique com o botão direito para remover o pick mais próximo.
----------------------------------------------------
-Referências:
-- Numba: https://numba.pydata.org/
-- Matplotlib Widgets: https://matplotlib.org/stable/users/explain/widgets.html
-- Seismic NMO Theory: Yilmaz, O. (2001). Seismic Data Analysis.
-- Semblance Analysis: Taner, M. T., & Koehler, F. (1969). Velocity spectra-Digital computer derivation and applications of velocity functions.
----------------------------------------------------
-
-Autor: Ana Paula Carvalhos
-Data: Dezembro de 2025
-Versão: 1.0
----------------------------------------------------
-"""
-
 # ================= CONFIGURAÇÃO =================
-BASE_DIR = r'C:/Users/Anacarvs/Desktop/Anisotropy_Analysis/'
+BASE_DIR = r'C:\Users\anapa\OneDrive\Área de Trabalho\SeismicModeling2D-master\SeismicModeling2D-master'
 
-F_BIN_IN = f'{BASE_DIR}/Outputs/Line_CMP_Sorted_T2_8km.bin'
-F_HEAD   = f'{BASE_DIR}/outputs/Trace_Headers_T2_8km.csv'
+F_BIN_IN = f'{BASE_DIR}/outputs/Line_CMP_Muted_AP2.bin'
+F_HEAD = f'{BASE_DIR}/outputs/Trace_Headers_AP2.csv'
+
 F_OUT_PICKS = f'{BASE_DIR}/Outputs/Velocity_Picks.csv'
 F_OUT_VEL   = f'{BASE_DIR}/Outputs/Velocity_Model_2D.bin'
 F_OUT_NMO   = f'{BASE_DIR}/Outputs/Line_NMO_Corrected.bin'
 
-Nt = 12001           
-dt = 0.0005          
+Nt = 1501           
+dt = 0.001        
 
 CMP_BIN_SIZE = 12.5
 CMP_STEP = 100.0     
@@ -202,7 +157,7 @@ def run_nmo_fast(data, offsets, dt, v_rms, stretch_percent):
 
 class VelocitySuite:
     def __init__(self):
-        print("--- INICIANDO SUITE V22 ---")
+        print("--- INICIANDO SUITE V22 (SMOOTH INTERPOLATION) ---")
         if not os.path.exists(F_BIN_IN): return
         
         self.headers = pd.read_csv(F_HEAD)
@@ -214,7 +169,6 @@ class VelocitySuite:
         self.all_cmps = np.sort(self.headers[col].unique())
         self.min_cmp, self.max_cmp = self.all_cmps[0], self.all_cmps[-1]
         
-        # Navegação
         step = max(1, int(CMP_STEP/(self.all_cmps[1]-self.all_cmps[0])))
         self.nav_cmps = self.all_cmps[::step]
         self.curr_idx = len(self.nav_cmps)//2
@@ -223,7 +177,6 @@ class VelocitySuite:
         self.picks_db = {}
         self.picks_curr = []
         
-        # Parâmetros
         self.p_vmin, self.p_vmax = INIT_VMIN, INIT_VMAX
         self.p_dv, self.p_win, self.p_gain = INIT_DV, INIT_WIN, INIT_GAIN
         
@@ -244,93 +197,64 @@ class VelocitySuite:
         self.v_ax = np.arange(self.p_vmin, self.p_vmax + self.p_dv, self.p_dv, dtype=np.float32)
 
     def init_windows(self):
-        # JANELA 1 - Layout corrigido
-        self.fig1 = plt.figure(figsize=(14, 9)) # Aumentei um pouco a altura total
+        self.fig1 = plt.figure(figsize=(16, 9))
         self.fig1.canvas.manager.set_window_title("1. Picking Interativo")
         
-        # 1. Gráficos (Base em 0.40 para liberar espaço embaixo)
-        base_plot = 0.40
-        height_plot = 0.55
-        self.ax1_sem = self.fig1.add_axes([0.05, base_plot, 0.28, height_plot])
-        self.ax1_gat = self.fig1.add_axes([0.35, base_plot, 0.28, height_plot], sharey=self.ax1_sem)
-        self.ax1_nmo = self.fig1.add_axes([0.65, base_plot, 0.28, height_plot], sharey=self.ax1_sem)
+        plt.subplots_adjust(left=0.05, right=0.95, top=0.92, bottom=0.30, wspace=0.2)
         
-        # Fundo Painel Inferior (Área cinza de controles)
-        self.fig1.patches.append(plt.Rectangle((0, 0), 1, base_plot - 0.02, 
-                                               transform=self.fig1.transFigure, color='#f0f0f0', zorder=-1))
+        self.ax1_sem = self.fig1.add_axes([0.05, 0.40, 0.28, 0.50])
+        self.ax1_gat = self.fig1.add_axes([0.36, 0.40, 0.28, 0.50], sharey=self.ax1_sem)
+        self.ax1_nmo = self.fig1.add_axes([0.67, 0.40, 0.28, 0.50], sharey=self.ax1_sem)
         
-        # 2. MAPA (Timeline) - Y ~ 0.30
-        self.ax_map = self.fig1.add_axes([0.1, 0.30, 0.8, 0.02])
+        self.ax_map = self.fig1.add_axes([0.10, 0.15, 0.80, 0.05])
         self.ax_map.set_yticks([])
         self.ax_map.set_xlim(self.min_cmp, self.max_cmp)
-        self.ax_map.set_xlabel("Cobertura da Linha", fontsize=8)
+        self.ax_map.set_title("Mapa de Cobertura (CMPs)", fontsize=9)
+        self.ax_map.tick_params(axis='x', labelsize=8)
         self.ax_map.plot(self.all_cmps, np.zeros_like(self.all_cmps), 'o', color='lightgray', markersize=2)
-        self.ln_map_done, = self.ax_map.plot([], [], 'o', color='green', markersize=4)
-        self.ln_map_curr, = self.ax_map.plot([self.curr_cmp], [0], 'o', color='red', markersize=8, markeredgecolor='k')
+        self.ln_map_done, = self.ax_map.plot([], [], 'o', color='green', markersize=5, label='Picks Salvos')
+        self.ln_map_curr, = self.ax_map.plot([self.curr_cmp], [0], 'o', color='red', markersize=8, markeredgecolor='k', label='Atual')
+        self.ax_map.legend(loc='lower right', fontsize=8)
         
-        # 3. NAVEGAÇÃO - Y ~ 0.22 (Logo abaixo do mapa)
-        y_nav = 0.20
-        self.btn_prev = Button(self.fig1.add_axes([0.40, y_nav, 0.04, 0.04]), "<<")
-        self.btn_prev.on_clicked(self.on_prev_cmp)
-        
-        self.txt_goto = TextBox(self.fig1.add_axes([0.43, y_nav, 0.08, 0.04]), "CMP:", initial=str(int(self.curr_cmp)))
-        self.txt_goto.on_submit(self.on_text_goto)
-        
-        self.btn_next = Button(self.fig1.add_axes([0.54, y_nav, 0.04, 0.04]), ">>")
-        self.btn_next.on_clicked(self.on_next_cmp)
-        
-        # 4. LINHA 1 DE CONTROLES: PARÂMETROS - Y ~ 0.13
-        # Espaçamos horizontalmente para caber os labels "Min:", "Max:", etc.
-        y_p = 0.13
-        h_ctl = 0.035
-        
-        # Labels do TextBox ficam à esquerda do eixo. Deixamos margem.
-        self.txt_vmin = TextBox(self.fig1.add_axes([0.08, y_p, 0.06, h_ctl]), "Min:", initial=str(self.p_vmin))
-        self.txt_vmax = TextBox(self.fig1.add_axes([0.19, y_p, 0.06, h_ctl]), "Max:", initial=str(self.p_vmax))
-        self.txt_dv   = TextBox(self.fig1.add_axes([0.31, y_p, 0.05, h_ctl]), "Step:", initial=str(self.p_dv))
-        self.txt_win  = TextBox(self.fig1.add_axes([0.43, y_p, 0.05, h_ctl]), "Win:", initial=str(self.p_win))
-        self.txt_gain = TextBox(self.fig1.add_axes([0.55, y_p, 0.05, h_ctl]), "Gain:", initial=str(self.p_gain))
-        
-        self.btn_upd = Button(self.fig1.add_axes([0.65, y_p, 0.08, h_ctl]), "Update", color='lightblue')
-        self.btn_upd.on_clicked(self.on_config_update)
-        
-        # 5. LINHA 2 DE CONTROLES: AÇÕES - Y ~ 0.04 (Fundo da tela)
-        y_a = 0.04
-        w_btn = 0.10
-        spacing = 0.15 # Espaço entre centros dos botões
-        
-        self.btn_save = Button(self.fig1.add_axes([0.15, y_a, w_btn, h_ctl]), "Salvar", color='lightgreen')
-        self.btn_save.on_clicked(self.save_picks_disk)
-        
-        self.btn_exp = Button(self.fig1.add_axes([0.35, y_a, w_btn, h_ctl]), "EXPORTAR", color='gold')
-        self.btn_exp.on_clicked(self.export_data)
-        
-        self.btn_rst = Button(self.fig1.add_axes([0.55, y_a, w_btn, h_ctl]), "RESETAR", color='salmon')
-        self.btn_rst.on_clicked(self.reset_all)
-        
-        self.btn_cls = Button(self.fig1.add_axes([0.75, y_a, w_btn, h_ctl]), "FECHAR", color='#ffcccc')
-        self.btn_cls.on_clicked(lambda e: plt.close('all'))
-        
-        # --- Configs Gráficos ---
+        self.fig1.text(0.5, 0.03, 
+                       "ATALHOS: [S] Salvar | [E] Exportar | [R] Reset | [Setas] Navegar | [Esq] Picar | [Dir] Apagar", 
+                       fontweight='bold', ha='center', fontsize=10, 
+                       bbox=dict(facecolor='#f0f0f0', edgecolor='gray', boxstyle='round,pad=0.5'))
+
         self.im_sem = self.ax1_sem.imshow(np.zeros((10,10)), aspect='auto', cmap='jet', vmin=0, vmax=1)
-        self.ln_pick, = self.ax1_sem.plot([], [], 'r-o', lw=2.5, markersize=6, zorder=100)
+        self.ln_pick, = self.ax1_sem.plot([], [], 'r-o', lw=2.0, markersize=5, zorder=100)
         
         self.im_gat = self.ax1_gat.imshow(np.zeros((10,10)), aspect='auto', cmap='gray')
         self.im_nmo = self.ax1_nmo.imshow(np.zeros((10,10)), aspect='auto', cmap='gray')
         self.hyp_lines = []
         
-        self.ax1_sem.set_title("Semblance"); self.ax1_sem.set_xlabel("Vel (m/s)"); self.ax1_sem.set_ylabel("Tempo (s)")
-        self.ax1_gat.set_title("Input"); self.ax1_gat.set_xlabel("Offset (m)")
-        self.ax1_nmo.set_title("NMO Preview"); self.ax1_nmo.set_xlabel("Offset (m)")
+        self.ax1_sem.set_title("Semblance", fontsize=11, fontweight='bold')
+        self.ax1_sem.set_xlabel("Velocidade (m/s)", fontsize=9)
+        self.ax1_sem.set_ylabel("Tempo (s)", fontsize=9)
         
-        for ax in [self.ax1_sem, self.ax1_gat, self.ax1_nmo]: ax.set_ylim(self.t_ax[-1], 0)
+        cbar = plt.colorbar(self.im_sem, ax=self.ax1_sem, orientation='horizontal', pad=0.12, fraction=0.05)
+        cbar.set_label('Coerência', fontsize=8)
+        cbar.ax.tick_params(labelsize=8)
+
+        self.ax1_gat.set_title("Gather Original", fontsize=11, fontweight='bold')
+        self.ax1_gat.set_xlabel("Offset (m)", fontsize=9)
+        
+        self.ax1_nmo.set_title("Prévia NMO", fontsize=11, fontweight='bold')
+        self.ax1_nmo.set_xlabel("Offset (m)", fontsize=9)
+        
+        for ax in [self.ax1_sem, self.ax1_gat, self.ax1_nmo]: 
+            ax.set_ylim(self.t_ax[-1], 0)
+            ax.grid(True, linestyle=':', alpha=0.5, color='white')
+            ax.tick_params(axis='both', labelsize=8)
+        
         self.fig1.canvas.mpl_connect('button_press_event', self.on_pick)
+        self.fig1.canvas.mpl_connect('key_press_event', self.on_key)
 
     def load_cmp(self, cmp_val):
-        print(f"CMP {int(cmp_val)}...")
+        print(f"Carregando CMP {int(cmp_val)}...")
         raw, off, _ = load_cmp_from_disk(self.headers, self.memmap, cmp_val, CMP_BIN_SIZE)
         if raw is None: 
-            print("CMP Vazio.")
+            print("CMP Vazio/Não encontrado.")
             return
         
         self.offsets = off
@@ -352,7 +276,6 @@ class VelocitySuite:
         self.im_nmo.set_clim(-1, 1)
         self.ax1_nmo.set_xlim(off[0], off[-1])
         
-        # Carrega picks existentes
         self.picks_curr = list(self.picks_db.get(int(cmp_val), []))
         
         self.update_dynamic()
@@ -394,75 +317,40 @@ class VelocitySuite:
             self.hyp_lines.append(l)
         self.fig1.canvas.draw_idle()
 
-    # --- NAVEGAÇÃO ---
-
     def change_cmp_index(self, idx):
-        # 1. Salva estado ATUAL antes de mudar (Cópia)
         self.picks_db[int(self.curr_cmp)] = list(self.picks_curr)
-        
-        # 2. Muda índice
         idx = max(0, min(len(self.nav_cmps)-1, idx))
         self.curr_idx = idx
         self.curr_cmp = float(self.nav_cmps[self.curr_idx])
-        
-        # 3. Atualiza UI
-        self.txt_goto.set_val(str(int(self.curr_cmp)))
-        
-        # 4. Carrega NOVO estado
         self.load_cmp(self.curr_cmp)
 
-    def on_prev_cmp(self, event):
-        self.change_cmp_index(self.curr_idx - 1)
-
-    def on_next_cmp(self, event):
-        self.change_cmp_index(self.curr_idx + 1)
-
-    def on_text_goto(self, text):
-        try:
-            target = float(text)
-            idx = np.abs(self.nav_cmps - target).argmin()
-            self.change_cmp_index(idx)
-        except: pass
-
-    def on_config_update(self, event):
-        try:
-            self.p_vmin = float(self.txt_vmin.text)
-            self.p_vmax = float(self.txt_vmax.text)
-            self.p_dv   = float(self.txt_dv.text)
-            self.p_win  = float(self.txt_win.text)
-            self.p_gain = float(self.txt_gain.text)
-            self.update_v_axis()
-            self.load_cmp(self.curr_cmp)
-        except: print("Erro parâmetros")
+    def on_key(self, event):
+        if event.key == 'right': self.change_cmp_index(self.curr_idx + 1)
+        elif event.key == 'left': self.change_cmp_index(self.curr_idx - 1)
+        elif event.key == 's': self.save_picks_disk(None)
+        elif event.key == 'e': self.export_data(None)
+        elif event.key == 'r':
+            self.picks_curr = []
+            self.picks_db[int(self.curr_cmp)] = []
+            self.update_dynamic()
 
     def on_pick(self, event):
         if event.inaxes != self.ax1_sem or self.fig1.canvas.toolbar.mode != '': return
-        
         if event.button == 1: self.picks_curr.append((event.ydata, event.xdata))
         elif event.button == 3 and self.picks_curr:
              dists = [((t-event.ydata)**2 + ((v-event.xdata)/1000)**2) for t, v in self.picks_curr]
              self.picks_curr.pop(np.argmin(dists))
-        
-        # Salva instantâneo
         self.picks_db[int(self.curr_cmp)] = list(self.picks_curr)
         self.update_dynamic()
 
-    def reset_all(self, event):
-        self.picks_db = {}
-        self.picks_curr = []
-        self.update_dynamic()
-        self.ln_map_done.set_data([], [])
-        self.fig1.canvas.draw()
-
     def save_picks_disk(self, event):
-        # Commit final
         self.picks_db[int(self.curr_cmp)] = list(self.picks_curr)
         rows = []
         for c, p in self.picks_db.items():
             for t, v in p: rows.append({'CMP': c, 'Time': t, 'Velocity': v})
         try:
             pd.DataFrame(rows).to_csv(F_OUT_PICKS, index=False)
-            print(f"Picks Salvos.")
+            print(f"Picks Salvos em {F_OUT_PICKS}")
         except Exception as e: print(f"Erro CSV: {e}")
 
     def cleanup_qc(self):
@@ -476,40 +364,42 @@ class VelocitySuite:
         gc.collect()
 
     def export_data(self, event):
-        print("\n--- EXPORTANDO ---")
+        print("\n--- EXPORTANDO DADOS (COM SUAVIZAÇÃO) ---")
         self.cleanup_qc()
         self.save_picks_disk(None)
         if not os.path.exists(F_OUT_PICKS): return
         df_p = pd.read_csv(F_OUT_PICKS)
         if df_p.empty: return
 
-        print("1. Interpolando Modelo...")
-        picked_cmps = np.sort(df_p['CMP'].unique())
-        dense_profiles = {}
-        for c in picked_cmps:
+        print("1. Criando Malha de Velocidade...")
+        
+        # 1. Picks únicos
+        picked_cmps = np.sort(df_p['CMP'].unique().astype(float))
+        
+        # 2. Criar perfis verticais nos locais picados
+        sparse_vels = np.zeros((Nt, len(picked_cmps)), dtype=np.float32)
+        for i, c in enumerate(picked_cmps):
             p = df_p[df_p['CMP'] == c].sort_values('Time')
-            v_curve = np.interp(self.t_ax, p['Time'], p['Velocity'], left=p['Velocity'].iloc[0], right=p['Velocity'].iloc[-1])
-            dense_profiles[c] = v_curve
+            sparse_vels[:, i] = np.interp(self.t_ax, p['Time'], p['Velocity'], 
+                                          left=p['Velocity'].iloc[0], right=p['Velocity'].iloc[-1])
 
-        self.vel_model_2d = np.zeros((Nt, len(self.all_cmps)), dtype=np.float32)
-        
-        for i, cmp_curr in enumerate(self.all_cmps):
-            if cmp_curr in dense_profiles:
-                self.vel_model_2d[:, i] = dense_profiles[cmp_curr]
-            else:
-                idx_pos = np.searchsorted(picked_cmps, cmp_curr)
-                if idx_pos == 0: self.vel_model_2d[:, i] = dense_profiles[picked_cmps[0]]
-                elif idx_pos == len(picked_cmps): self.vel_model_2d[:, i] = dense_profiles[picked_cmps[-1]]
-                else:
-                    c1, c2 = picked_cmps[idx_pos - 1], picked_cmps[idx_pos]
-                    w = (cmp_curr - c1) / (c2 - c1)
-                    v_left = dense_profiles[c1]
-                    v_right = dense_profiles[c2]
-                    self.vel_model_2d[:, i] = (1.0 - w) * v_left + w * v_right
-        
-        self.vel_model_2d.astype(np.float32).tofile(F_OUT_VEL)
+        # 3. Interpolação Lateral (Scipy)
+        if len(picked_cmps) == 1:
+            self.vel_model_2d = np.tile(sparse_vels[:, 0:1], (1, len(self.all_cmps)))
+        else:
+            # Linear para preencher
+            f_interp = interp1d(picked_cmps, sparse_vels, kind='linear', axis=1, 
+                                bounds_error=False, fill_value=(sparse_vels[:, 0], sparse_vels[:, -1]))
+            self.vel_model_2d = f_interp(self.all_cmps).astype(np.float32)
+            
+            # SUAVIZAÇÃO: Aplica filtro gaussiano leve para remover "quinas"
+            # sigma=(vertical_smooth, lateral_smooth)
+            # Lateral sigma=20 traces ajuda a mesclar os blocos
+            self.vel_model_2d = gaussian_filter(self.vel_model_2d, sigma=(2, 20))
 
-        print("2. Gerando NMO...")
+        self.vel_model_2d.tofile(F_OUT_VEL)
+
+        print("2. Aplicando NMO (Exportação)...")
         try:
             with open(F_OUT_NMO, 'wb') as f: f.seek(len(self.headers)*Nt*4 - 1); f.write(b'\0')
             fp_nmo = np.memmap(F_OUT_NMO, dtype='float32', mode='r+', shape=(Nt, len(self.headers)), order='F')
@@ -523,57 +413,66 @@ class VelocitySuite:
                 fp_nmo[:, idxs] = nmo
                 
             del fp_nmo, fp_raw
-            print("Concluído.")
+            print("Exportação Concluída.")
             self.open_qc_windows(self.vel_model_2d, df_p)
-        except Exception as e:
-            print(f"Erro Export: {e}")
+        except Exception as e: print(f"Erro Export: {e}")
 
     def open_qc_windows(self, vel_model, df_p):
-        # JANELA 2
-        self.fig2 = plt.figure(figsize=(14, 6))
-        self.fig2.canvas.manager.set_window_title("2. QC Modelo")
+        # JANELA QC 1: MODELO
+        self.fig2 = plt.figure(figsize=(12, 6))
+        self.fig2.canvas.manager.set_window_title("2. QC Modelo de Velocidade")
+        
+        plt.subplots_adjust(top=0.88, bottom=0.15)
+        
         ax_map = self.fig2.add_subplot(121)
         self.ax_prf = self.fig2.add_subplot(122)
         
-        im = ax_map.imshow(vel_model, aspect='auto', cmap='jet', vmin=self.p_vmin, vmax=self.p_vmax,
+        # Escala dinâmica
+        dyn_vmin = np.min(vel_model)
+        dyn_vmax = np.max(vel_model)
+        
+        im = ax_map.imshow(vel_model, aspect='auto', cmap='jet', vmin=dyn_vmin, vmax=dyn_vmax,
                            extent=[self.all_cmps[0], self.all_cmps[-1], self.t_ax[-1], 0])
-        ax_map.scatter(df_p['CMP'], df_p['Time'], c='k', s=10)
-        ax_map.set_title("Modelo Interpolado"); ax_map.set_xlabel("CMP"); ax_map.set_ylabel("Tempo")
-        plt.colorbar(im, ax=ax_map, label="Vrms")
+        ax_map.scatter(df_p['CMP'], df_p['Time'], c='k', s=15, label='Picks')
+        ax_map.set_title("Modelo 2D Final (Suavizado)", fontweight='bold')
+        ax_map.set_xlabel("CMP Index"); ax_map.set_ylabel("Tempo (s)")
+        ax_map.legend(fontsize=8, loc='upper right')
+        plt.colorbar(im, ax=ax_map, label="Vrms (m/s)")
         
         idx_curr = np.abs(self.all_cmps - self.curr_cmp).argmin()
         self.ln_prof, = self.ax_prf.plot(vel_model[:, idx_curr], self.t_ax, 'k-', lw=2)
-        self.ln_mark_curr = ax_map.axvline(self.all_cmps[idx_curr], color='w', ls='--')
+        self.ln_mark_curr = ax_map.axvline(self.all_cmps[idx_curr], color='white', ls='--')
         
         self.ax_prf.set_ylim(self.t_ax[-1], 0); self.ax_prf.grid(True)
-        self.ax_prf.set_xlim(self.p_vmin, self.p_vmax)
-        self.ax_prf.set_title(f"Perfil CMP {self.all_cmps[idx_curr]}")
+        self.ax_prf.set_xlim(dyn_vmin - 50, dyn_vmax + 50)
+        self.ax_prf.set_title(f"Perfil CMP {int(self.all_cmps[idx_curr])}", fontweight='bold')
+        self.ax_prf.set_xlabel("Velocidade (m/s)"); self.ax_prf.set_ylabel("Tempo (s)")
         
         self.vel_cached = vel_model
         self.fig2.canvas.mpl_connect('button_press_event', self.on_map_click)
 
-        # JANELA 3
-        self.fig3 = plt.figure(figsize=(14, 6))
-        self.fig3.canvas.manager.set_window_title("3. QC NMO")
-        self.ax3_main = self.fig3.add_axes([0.05, 0.25, 0.9, 0.7])
+        # JANELA QC 2: NMO
+        self.fig3 = plt.figure(figsize=(10, 6))
+        self.fig3.canvas.manager.set_window_title("3. QC NMO (Supergather)")
+        plt.subplots_adjust(bottom=0.20)
+        self.ax3_main = self.fig3.add_axes([0.1, 0.25, 0.8, 0.65])
         
-        ax_sl = self.fig3.add_axes([0.2, 0.05, 0.5, 0.03])
-        self.sl_qc = Slider(ax_sl, "Posição", self.min_cmp, self.max_cmp, valinit=self.curr_cmp, valstep=CMP_BIN_SIZE)
+        ax_sl = self.fig3.add_axes([0.15, 0.1, 0.5, 0.03])
+        self.sl_qc = Slider(ax_sl, "CMP", self.min_cmp, self.max_cmp, valinit=self.curr_cmp, valstep=CMP_BIN_SIZE)
         self.sl_qc.on_changed(self.update_qc_view)
         
-        self.txt_qc = TextBox(self.fig3.add_axes([0.8, 0.05, 0.1, 0.05]), "Qtd:", initial=str(self.qc_n_panels))
+        self.txt_qc = TextBox(self.fig3.add_axes([0.75, 0.1, 0.1, 0.05]), "Paineis:", initial=str(self.qc_n_panels))
         self.txt_qc.on_submit(self.on_qc_text)
         
         self.im_multi = self.ax3_main.imshow(np.zeros((10,10)), aspect='auto', cmap='gray')
-        self.ax3_main.set_title("Supergather NMO")
-        self.ax3_main.set_ylabel("Tempo (s)"); self.ax3_main.set_xlabel("Offset (m)")
+        self.ax3_main.set_title("NMO Control (Vizinhos)", fontweight='bold')
+        self.ax3_main.set_xlabel("Traços (Gathers Vizinhos)"); self.ax3_main.set_ylabel("Tempo (s)")
         
         try:
             self.fp_nmo_qc = np.memmap(F_OUT_NMO, dtype='float32', mode='r', shape=(Nt, len(self.headers)), order='F')
             self.update_qc_view(None)
             plt.show()
-        except Exception as e:
-            print(f"Erro ao abrir QC: {e}")
+        except Exception as e: print(f"Erro ao abrir QC NMO: {e}")
 
     def on_map_click(self, event):
         if event.inaxes != self.fig2.axes[0]: return
@@ -581,7 +480,7 @@ class VelocitySuite:
         if 0 <= idx < len(self.all_cmps):
             self.ln_prof.set_data(self.vel_cached[:, idx], self.t_ax)
             self.ln_mark_curr.set_xdata([event.xdata])
-            self.ax_prf.set_title(f"Perfil CMP {int(event.xdata)}")
+            self.ax_prf.set_title(f"Perfil CMP {int(event.xdata)}", fontweight='bold')
             self.fig2.canvas.draw_idle()
 
     def on_qc_text(self, text):
@@ -594,22 +493,19 @@ class VelocitySuite:
         target = self.sl_qc.val
         idx = np.searchsorted(self.all_cmps, target)
         n = self.qc_n_panels
-        
         start, end = max(0, idx - n//2), min(len(self.all_cmps), idx + n)
         panels, sep = [], np.zeros((Nt, 5))
         for i in range(start, end):
             raw, _, _ = load_cmp_from_disk(self.headers, self.fp_nmo_qc, self.all_cmps[i], CMP_BIN_SIZE)
             if raw is None: continue
-            vm = np.percentile(np.abs(raw), 98); 
+            vm = np.percentile(np.abs(raw), 98)
             if vm > 0: raw /= vm
             panels.append(raw); panels.append(sep)
-        
         if panels:
             full = np.hstack(panels[:-1])
             self.im_multi.set_data(full)
             self.im_multi.set_extent([0, full.shape[1], self.t_ax[-1], 0])
             self.im_multi.set_clim(-1, 1)
-            self.ax3_main.set_aspect('auto')
             self.ax3_main.set_ylim(self.t_ax[-1], 0)
             self.fig3.canvas.draw_idle()
 

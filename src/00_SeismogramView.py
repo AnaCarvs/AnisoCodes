@@ -4,10 +4,10 @@ import os
 
 # ================= CONFIGURAÇÃO =================
 # Coloque aqui o caminho do seu arquivo binário
-ARQUIVO_BIN = r"Outputs/Seismograms/T2/VTIseismogram_shot_1_Nt12001_Nrec673.bin" 
+ARQUIVO_BIN = r"C:\Users\anapa\OneDrive\Área de Trabalho\SeismicModeling2D-master\SeismicModeling2D-master\outputs\seismograms\AP\VTIseismogram_shot_15_Nt5001_Nrec151.bin" 
 
 # Parâmetros de Tempo (Sempre fixos na modelagem)
-Nt = 12001       # Número de amostras de tempo
+Nt = 5001       # Número de amostras de tempo
 dt = 0.0005      # Taxa de amostragem (s)
 
 # ================= LEITURA AUTOMÁTICA =================
